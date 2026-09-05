@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>Cave Miner V3</title>
+<style>
+*{box-sizing:border-box}
+body{
+  margin:0;
+  overflow:hidden;
+  background:#090b11;
+  color:white;
+  font-family:Arial,sans-serif;
+  touch-action:none;
+}
+canvas{display:block}
+#hud{
+ position:fixed;top:10px;left:10px;right:10px;
+ display:flex;gap:8px;flex-wrap:wrap;z-index:10;
+}
+.box{
+ background:#151a27eF;
+ border:1px solid #4b5670;
+ border-radius:10px;
+ padding:8px 12px;
+ font-weight:bold;
+ box-shadow:0 3px 12px #0008;
+}
+button{
+ border:1px solid #65718d;
+ background:#20283a;
+ color:white;
+ border-radius:10px;
+ padding:11px 15px;
+ font-weight:bold;
+}
+button:active{transform:scale(.96)}
+#message{
+ position:fixed;top:75px;left:50%;
+ transform:translateX(-50%);
+ background:#151a27ed;
+ border:1px solid #58657f;
+ border-radius:12px;
+ padding:10px 16px;
+ z-index:10;
+ text-align:center;
+ min-width:240px;
+}
+#buttons{
+ position:fixed;right:12px;bottom:18px;
+ display:flex;gap:8px;z-index:10;
+}
+#dpad{
+ position:fixed;left:14px;bottom:18px;
+ width:160px;height:145px;z-index:10;
+}
+.d{
+ position:absolute;width:52px;height:52px;
+ font-size:22px;padding:0;
+}
+.up{left:54px;top:0}
+.left{left:0;top:55px}
+.down{left:54px;top:55px}
+.right{left:108px;top:55px}
+#inventory,#shop{
+ position:fixed;z-index:20;
+ left:50%;top:50%;
+ transform:translate(-50%,-50%);
+ width:min(380px,90vw);
+ max-height:80vh;
+ overflow:auto;
+ background:#151a27;
+ border:2px solid #596780;
+ border-radius:16px;
+ padding:18px;
+ display:none;
+ box-shadow:0 10px 40px #000c;
+}
+.item{
+ display:flex;justify-content:space-between;
+ padding:9px;
+ border-bottom:1px solid #30394c;
+}
+#closeInv,#closeShop{float:right}
+.small{font-size:12px;color:#b8c0d0}
+@media(max-width:650px){
+ .box{font-size:12px;padding:7px 9px}
+ #message{top:92px;font-size:12px}
+ #buttons button{padding:10px}
+}
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<div id="hud">
+ <div class="box">❤️ <span id="hp">100</span></div>
+ <div class="box">💰 $<span id="money">0</span></div>
+ <div class="box">🎒 <span id="slots">0</span>/20</div>
+ <div class="box">⛏️ <span id="pickaxe">Iron Pickaxe</span></div>
+ <div class="box">🗺️ Forgotten Mines</div>
+</div>
+
+<div id="message">
+  Welcome to Cave Miner V3!<br>
+  <span class="small">Mine the rocks and watch out for monsters.</span>
+</div>
+
+<div id="buttons">
+ <button onclick="mine()">⛏️ Mine</button>
+ <button onclick="openInventory()">🎒</button>
+ <button onclick="openShop()">🏪</button>
+</div>
+
+<div id="dpad">
+ <button class="d up" data-key="w">▲</button>
+ <button class="d left" data-key="a">◀</button>
+ <button class="d down" data-key="s">▼</button>
+ <button class="d right" data-key="d">▶</button>
+</div>
+
+<div id="inventory">
+ <button id="closeInv" onclick="closeInventory()">✕</button>
+ <h2>🎒 Inventory</h2>
+ <div id="inventoryList"></div>
+ <br>
+ <button onclick="sellAll()">💰 Sell All Ores</button>
+</div>
+
+<div id="shop">
+ <button id="closeShop" onclick="closeShop()">✕</button>
+ <h2>🏪 Mine Shop</h2>
+ <p>Upgrade your equipment.</p>
+
+ <button onclick="buyPickaxe()">⛏️ Upgrade Pickaxe — $250</button>
+ <p>Current: <span id="pickLevel">Level 1</span></p>
+
+ <button onclick="buyBag()">🎒 Upgrade Backpack — $150</button>
+ <p>Capacity: <span id="capacity">20</span></p>
+
+ <hr>
+ <p>💰 Money: $<span id="shopMoney">0</span></p>
+</div>
+
+<script>
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+
+let W,H;
+function resize(){
+ W=canvas.width=innerWidth;
+ H=canvas.height=innerHeight;
+}
+addEventListener("resize",resize);
+resize();
+
+/* =========================
+   GAME DATA
+========================= */
+
+const world={
+ width:2200,
+ height:1400
+};
+
+let camera={x:0,y:0};
+
+let player={
+ x:220,
+ y:700,
+ hp:100,
+ maxHp:100,
+ speed:4,
+ pickLevel:1,
+ capacity:20
+};
+
+let money=0;
+
+let inventory={
+ Coal:0,
+ Iron:0,
+ Crystal:0,
+ Gold:0
+};
+
+const oreInfo={
+ Coal:{value:10,icon:"⬛"},
+ Iron:{value:20,icon:"⬜"},
+ Crystal:{value:50,icon:"💎"},
+ Gold:{value:100,icon:"🟨"}
+};
+
+/* =========================
+   ORES
+========================= */
+
+let ores=[
+ {x:450,y:400,type:"Coal",hits:1},
+ {x:620,y:850,type:"Iron",hits:2},
+ {x:800,y:500,type:"Crystal",hits:3},
+ {x:970,y:1000,type:"Gold",hits:4},
+ {x:1120,y:430,type:"Iron",hits:2},
+ {x:1300,y:780,type:"Crystal",hits:3},
+ {x:1500,y:370,type:"Gold",hits:4},
+ {x:1700,y:950,type:"Coal",hits:1},
+ {x:1900,y:550,type:"Crystal",hits:3},
+ {x:2030,y:1080,type:"Gold",hits:4}
+];
+
+/* =========================
+   MONSTERS
+========================= */
+
+let monsters=[
+ {
+  name:"Rock Crawler",
+  x:560,y:520,
+  hp:50,maxHp:50,
+  damage:7,
+  speed:1.1,
+  color:"#9a6247"
+ },
+ {
+  name:"Cave Bat",
+  x:1050,y:700,
+  hp:35,maxHp:35,
+  damage:5,
+  speed:1.7,
+  color:"#7654a8"
+ },
+ {
+  name:"Stone Goblin",
+  x:1450,y:650,
+  hp:75,maxHp:75,
+  damage:10,
+  speed:.8,
+  color:"#66815b"
+ },
+ {
+  name:"Magma Bug",
+  x:1810,y:420,
+  hp:90,maxHp:90,
+  damage:12,
+  speed:1,
+  color:"#c75b39"
+ }
+];
+
+/* =========================
+   ENTITIES
+========================= */
+
+let entities=[
+ {
+  name:"Drex",
+  x:1250,y:250,
+  active:false,
+  rare:5,
+  color:"#e84c65"
+ },
+ {
+  name:"Kane",
+  x:1750,y:1100,
+  active:false,
+  rare:3,
+  color:"#7d69ff"
+ },
+ {
+  name:"G.O.D.",
+  x:0,y:0,
+  active:false,
+  rare:.15,
+  color:"#ffffff"
+ }
+];
+
+/* =========================
+   CONTROLS
+========================= */
+
+const keys={};
+
+addEventListener("keydown",e=>{
+ keys[e.key.toLowerCase()]=true;
+
+ if(e.code==="Space"){
+   e.preventDefault();
+   mine();
+ }
+
+ if(e.key.toLowerCase()==="i"){
+   openInventory();
+ }
+
+ if(e.key.toLowerCase()==="b"){
+   openShop();
+ }
+});
+
+addEventListener("keyup",e=>{
+ keys[e.key.toLowerCase()]=false;
+});
+
+/* Mobile buttons */
+document.querySelectorAll(".d").forEach(btn=>{
+ const key=btn.dataset.key;
+
+ btn.addEventListener("pointerdown",e=>{
+   e.preventDefault();
+   keys[key]=true;
+ });
+
+ btn.addEventListener("pointerup",()=>{
+   keys[key]=false;
+ });
+
+ btn.addEventListener("pointerleave",()=>{
+   keys[key]=false;
+ });
+});
+
+/* =========================
+   UTILITY
+========================= */
+
+function distance(a,b){
+ return Math.hypot(a.x-b.x,a.y-b.y);
+}
+
+function say(text){
+ const msg=document.getElementById("message");
+ msg.innerHTML=text;
+ clearTimeout(window.msgTimer);
+ window.msgTimer=setTimeout(()=>{
+   msg.innerHTML="Explore the Forgotten Mines!";
+ },3000);
+}
+
+function totalItems(){
+ return Object.values(inventory).reduce((a,b)=>a+b,0);
+}
+
+function updateHud(){
+ document.getElementById("hp").textContent=Math.round(player.hp);
+ document.getElementById("money").textContent=money;
+ document.getElementById("slots").textContent=totalItems();
+ document.getElementById("pickaxe").textContent=
+   player.pickLevel===1?"Iron Pickaxe":
+   player.pickLevel===2?"Steel Pickaxe":
+   player.pickLevel===3?"Crystal Pickaxe":"Demon Pickaxe";
+
+ document.getElementById("capacity").textContent=player.capacity;
+ document.getElementById("pickLevel").textContent="Level "+player.pickLevel;
+ document.getElementById("shopMoney").textContent=money;
+}
+
+/* =========================
+   MINING
+========================= */
+
+function mine(){
+
+ let target=null;
+
+ for(const ore of ores){
+   if(distance(player,ore)<75){
+     target=ore;
+     break;
+   }
+ }
+
+ if(!target){
+   say("⛏️ Get closer to an ore rock!");
+   return;
+ }
+
+ if(totalItems()>=player.capacity){
+   say("🎒 Your backpack is full!");
+   return;
+ }
+
+ target.hits--;
+
+ if(target.hits>0){
+   say("⛏️ CLANG! Keep mining!");
+   return;
+ }
+
+ inventory[target.type]++;
+ ores=ores.filter(o=>o!==target);
+
+ say(
+   "💎 Mined "+oreInfo[target.type].icon+
+   " "+target.type+"!"
+ );
+
+ updateHud();
+}
+
+/* =========================
+   SELLING
+========================= */
+
+function sellAll(){
+
+ let earned=0;
+
+ for(const type in inventory){
+   earned+=inventory[type]*oreInfo[type].value;
+   inventory[type]=0;
+ }
+
+ money+=earned;
+
+ say("💰 You sold your ores for $"+earned+"!");
+ updateHud();
+ renderInventory();
+}
+
+/* =========================
+   SHOP
+========================= */
+
+function buyPickaxe(){
+
+ if(player.pickLevel>=4){
+   say("⛏️ Your pickaxe is fully upgraded!");
+   return;
+ }
+
+ const price=250*player.pickLevel;
+
+ if(money<price){
+   say("💰 You need $"+price+"!");
+   return;
+ }
+
+ money-=price;
+ player.pickLevel++;
+
+ say("⛏️ Pickaxe upgraded!");
+ updateHud();
+}
+
+function buyBag(){
+
+ const price=150;
+
+ if(money<price){
+   say("💰 You need $150!");
+   return;
+ }
+
+ money-=price;
+ player.capacity+=10;
+
+ say("🎒 Backpack upgraded to "+player.capacity+" slots!");
+ updateHud();
+}
+
+function openShop(){
+ document.getElementById("shop").style.display="block";
+ updateHud();
+}
+
+function closeShop(){
+ document.getElementById("shop").style.display="none";
+}
+
+/* =========================
+   INVENTORY
+========================= */
+
+function openInventory(){
+ renderInventory();
+ document.getElementById("inventory").style.display="block";
+}
+
+function closeInventory(){
+ document.getElementById("inventory").style.display="none";
+}
+
+function renderInventory(){
+
+ const box=document.getElementById("inventoryList");
+
+ let html="";
+
+ for(const type in inventory){
+   html+=`
+    <div class="item">
+      <span>${oreInfo[type].icon} ${type}</span>
+      <b>${inventory[type]}</b>
+    </div>
+   `;
+ }
+
+ if(!html) html="<p>Your inventory is empty.</p>";
+
+ box.innerHTML=html;
+}
+
+/* =========================
+   MOVEMENT
+========================= */
+
+function movePlayer(){
+
+ let dx=0,dy=0;
+
+ if(keys.w||keys.arrowup)dy--;
+ if(keys.s||keys.arrowdown)dy++;
+ if(keys.a||keys.arrowleft)dx--;
+ if(keys.d||keys.arrowright)dx++;
+
+ if(dx||dy){
+
+   const len=Math.hypot(dx,dy);
+
+   player.x+=dx/len*player.speed;
+   player.y+=dy/len*player.speed;
+
+ }
+
+ player.x=Math.max(80,Math.min(world.width-80,player.x));
+ player.y=Math.max(80,Math.min(world.height-80,player.y));
+}
+
+/* =========================
+   MONSTER AI
+========================= */
+
+function updateMonsters(){
+
+ for(const m of monsters){
+
+   const d=distance(player,m);
+
+   if(d<230){
+
+     m.x+=(player.x-m.x)/Math.max(d,1)*m.speed;
+     m.y+=(player.y-m.y)/Math.max(d,1)*m.speed;
+
+     if(d<45){
+
+       player.hp-=m.damage/60;
+
+       if(player.hp<=0){
+
+         player.hp=player.maxHp;
+         player.x=220;
+         player.y=700;
+
+         say("💀 You were defeated! You returned to the entrance.");
+       }
+     }
+   }
+ }
+}
+
+/* =========================
+   ENTITY SYSTEM
+========================= */
+
+function entityCheck(){
+
+ for(const e of entities){
+
+   if(e.active)continue;
+
+   /*
+    Random encounter chance.
+    G.O.D. is extremely rare.
+   */
+
+   let chance=e.name==="G.O.D."?.00002:.0003;
+
+   if(Math.random()<chance){
+
+     e.active=true;
+
+     if(e.name==="G.O.D."){
+
+       e.x=player.x+250;
+       e.y=player.y;
+
+       say(
+         "🟪⚠️ G.O.D. HAS APPEARED!<br>"+
+         "<b>GEOMETRIC OVER DOWN</b>"
+       );
+
+     }else{
+
+       e.x=player.x+180;
+       e.y=player.y;
+
+       say(
+         "👁️ ENTITY DETECTED: <b>"+
+         e.name+
+         "</b>"
+       );
+     }
+   }
+ }
+
+ /* Move active entities */
+ for(const e of entities){
+
+   if(!e.active)continue;
+
+   const d=distance(player,e);
+
+   if(d<500){
+
+     e.x+=(player.x-e.x)/Math.max(d,1)*.7;
+     e.y+=(player.y-e.y)/Math.max(d,1)*.7;
+
+     if(d<55){
+
+       if(e.name==="G.O.D."){
+
+         player.hp=0;
+
+         say("🟪 G.O.D. has found you... RUN!");
+
+       }else{
+
+         player.hp-=.5;
+
+       }
+     }
+   }
+ }
+}
+
+/* =========================
+   DRAWING
+========================= */
+
+function drawCave(){
+
+ ctx.fillStyle="#0b0e15";
+ ctx.fillRect(0,0,world.width,world.height);
+
+ /* Floor tiles */
+ for(let x=0;x<world.width;x+=70){
+
+   for(let y=0;y<world.height;y+=70){
+
+     ctx.fillStyle=
+       ((x+y)/70)%2===0?
+       "#151a24":"#181e29";
+
+     ctx.fillRect(x,y,68,68);
+   }
+ }
+
+ /* Cave border */
+ ctx.strokeStyle="#485268";
+ ctx.lineWidth=25;
+ ctx.strokeRect(
+   40,40,
+   world.width-80,
+   world.height-80
+ );
+
+ /* Wooden supports */
+ for(let x=180;x<world.width;x+=400){
+
+   ctx.fillStyle="#704a2d";
+
+   ctx.fillRect(x,70,18,200);
+   ctx.fillRect(x,world.height-270,18,200);
+
+   ctx.fillRect(x,70,230,18);
+   ctx.fillRect(x,world.height-88,230,18);
+ }
+}
+
+function drawEntrance(){
+
+ ctx.fillStyle="#252e3b";
+
+ ctx.beginPath();
+ ctx.arc(
+   120,
+   700,
+   75,
+   Math.PI/2,
+   Math.PI*1.5
+ );
+
+ ctx.fill();
+
+ ctx.fillStyle="#f1c44b";
+ ctx.font="bold 20px Arial";
+ ctx.textAlign="center";
+ ctx.fillText("ENTRANCE",120,810);
+}
+
+function drawOres(){
+
+ for(const o of ores){
+
+   let radius=27;
+
+   ctx.beginPath();
+
+   if(o.type==="Coal")
+     ctx.fillStyle="#555a66";
+
+   if(o.type==="Iron")
+     ctx.fillStyle="#aeb8c9";
+
+   if(o.type==="Crystal")
+     ctx.fillStyle="#62d9ff";
+
+   if(o.type==="Gold")
+     ctx.fillStyle="#e8c63d";
+
+   ctx.arc(o.x,o.y,radius,0,Math.PI*2);
+   ctx.fill();
+
+   ctx.strokeStyle="#080b10";
+   ctx.lineWidth=5;
+   ctx.stroke();
+
+   ctx.font="12px Arial";
+   ctx.fillStyle="white";
+   ctx.textAlign="center";
+   ctx.fillText(o.type,o.x,o.y+47);
+ }
+}
+
+function drawMonsters(){
+
+ for(const m of monsters){
+
+   ctx.fillStyle=m.color;
+
+   ctx.beginPath();
+   ctx.arc(m.x,m.y,30,0,Math.PI*2);
+   ctx.fill();
+
+   /* Eyes */
+   ctx.fillStyle="white";
+
+   ctx.beginPath();
+   ctx.arc(m.x-10,m.y-5,6,0,Math.PI*2);
+   ctx.arc(m.x+10,m.y-5,6,0,Math.PI*2);
+   ctx.fill();
+
+   ctx.fillStyle="black";
+
+   ctx.beginPath();
+   ctx.arc(m.x-10,m.y-5,2,0,Math.PI*2);
+   ctx.arc(m.x+10,m.y-5,2,0,Math.PI*2);
+   ctx.fill();
+
+   /* HP */
+   ctx.fillStyle="#222";
+   ctx.fillRect(m.x-30,m.y-43,60,7);
+
+   ctx.fillStyle="#ef4659";
+   ctx.fillRect(
+     m.x-30,
+     m.y-43,
+     60*(m.hp/m.maxHp),
+     7
+   );
+
+   ctx.fillStyle="white";
+   ctx.font="bold 12px Arial";
+   ctx.fillText(m.name,m.x,m.y-50);
+ }
+}
+
+function drawEntities(){
+
+ for(const e of entities){
+
+   if(!e.active)continue;
+
+   ctx.save();
+   ctx.shadowBlur=25;
+   ctx.shadowColor=e.color;
+
+   ctx.fillStyle=e.color;
+
+   if(e.name==="G.O.D."){
+
+     ctx.translate(e.x,e.y);
+     ctx.rotate(Date.now()/1000);
+
+     ctx.fillRect(-35,-35,70,70);
+
+     ctx.strokeStyle="#111";
+     ctx.lineWidth=5;
+
+     ctx.strokeRect(-20,-20,40,40);
+
+   }else{
+
+     ctx.beginPath();
+     ctx.arc(e.x,e.y,34,0,Math.PI*2);
+     ctx.fill();
+
+     ctx.fillStyle="#050505";
+     ctx.font="bold 14px Arial";
+     ctx.textAlign="center";
+     ctx.fillText(e.name,e.x,e.y+5);
+   }
+
+   ctx.restore();
+ }
+}
+
+function drawPlayer(){
+
+ ctx.save();
+ ctx.translate(player.x,player.y);
+
+ /* Body */
+ ctx.fillStyle="#4c82ff";
+ ctx.fillRect(-17,-8,34,38);
+
+ /* Head */
+ ctx.fillStyle="#e8bd91";
+
+ ctx.beginPath();
+ ctx.arc(0,-25,17,0,Math.PI*2);
+ ctx.fill();
+
+ /* Helmet */
+ ctx.fillStyle="#e7bd3d";
+ ctx.fillRect(-18,-42,36,9);
+
+ /* Pickaxe */
+ ctx.strokeStyle="#d5d9df";
+ ctx.lineWidth=6;
+
+ ctx.beginPath();
+ ctx.moveTo(12,8);
+ ctx.lineTo(38,-22);
+ ctx.stroke();
+
+ ctx.restore();
+}
+
+function render(){
+
+ ctx.clearRect(0,0,W,H);
+
+ camera.x=Math.max(
+   0,
+   Math.min(world.width-W,player.x-W/2)
+ );
+
+ camera.y=Math.max(
+   0,
+   Math.min(world.height-H,player.y-H/2)
+ );
+
+ ctx.save();
+ ctx.translate(-camera.x,-camera.y);
+
+ drawCave();
+ drawEntrance();
+ drawOres();
+ drawMonsters();
+ drawEntities();
+ drawPlayer();
+
+ ctx.restore();
+
+ requestAnimationFrame(render);
+}
+
+/* =========================
+   GAME LOOP
+========================= */
+
+setInterval(()=>{
+
+ movePlayer();
+ updateMonsters();
+ entityCheck();
+ updateHud();
+
+},1000/60);
+
+updateHud();
+render();
+
+</script>
+</body>
+</html>
